@@ -54,4 +54,61 @@ mysql -u root -e "CREATE DATABASE IF NOT EXISTS pteropanel; \
   GRANT ALL PRIVILEGES ON pteropanel.* TO 'ptero'@'localhost'; \
   FLUSH PRIVILEGES;"
 
-# Configure
+# Configure .env
+sed -i "s#APP_URL=.*#APP_URL=https://${PANEL_DOMAIN}#" .env
+sed -i "s#DB_HOST=.*#DB_HOST=localhost#" .env
+sed -i "s#DB_DATABASE=.*#DB_DATABASE=pteropanel#" .env
+sed -i "s#DB_USERNAME=.*#DB_USERNAME=ptero#" .env
+sed -i "s#DB_PASSWORD=.*#DB_PASSWORD=ptero#" .env
+
+php artisan migrate --force
+
+echo ""
+echo "========== Generating initial nginx (HTTP only) =========="
+# Use a simple HTTP-only config first so certbot can validate on port 80
+cat > /etc/nginx/sites-enabled/ptero.conf <<EOF
+server {
+    listen 80;
+    server_name ${PANEL_DOMAIN};
+    root /home/container/panel/public;
+    index index.php;
+
+    location / {
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+
+    location ~ \.php\$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+    }
+}
+EOF
+
+rm -f /etc/nginx/sites-enabled/default || true
+
+# Start php-fpm and nginx for challenge
+service php8.2-fpm start >/dev/null 2>&1 || true
+nginx || true
+
+echo ""
+echo "========== Requesting SSL Certificate (Let's Encrypt) =========="
+certbot certonly --webroot -w /home/container/panel/public -d "${PANEL_DOMAIN}" \
+  --email "${SSL_EMAIL}" --agree-tos --non-interactive || {
+    echo "!!! SSL generation failed. Check DNS/ports and try reinstalling later."
+}
+
+echo ""
+echo "========== Switching nginx to full HTTPS config =========="
+# Use template with SSL
+if [ -f "/home/container/runtime/installer/nginx.conf.template" ]; then
+  sed "s/DOMAIN_PLACEHOLDER/${PANEL_DOMAIN}/g" /home/container/runtime/installer/nginx.conf.template > /etc/nginx/sites-enabled/ptero.conf
+fi
+
+nginx -s reload || true
+nginx -s stop || true
+
+echo ""
+echo "========== Installation Finished =========="
+echo "Your panel should be available at: https://${PANEL_DOMAIN}"
+echo "Now create the admin user by running: php artisan p:user:make (inside the container console)."
+touch /home/container/.installed
