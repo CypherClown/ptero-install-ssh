@@ -1,17 +1,7 @@
 server {
     listen 80;
     server_name DOMAIN_PLACEHOLDER;
-    root /home/container/panel/public;
-    index index.php;
-
-    location /.well-known/acme-challenge/ {
-        allow all;
-        root /home/container/panel/public;
-    }
-
-    location / {
-        return 301 https://$host$request_uri;
-    }
+    return 301 https://$host$request_uri;
 }
 
 server {
@@ -22,7 +12,6 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/DOMAIN_PLACEHOLDER/privkey.pem;
 
     root /home/container/panel/public;
-
     index index.php;
 
     location / {
